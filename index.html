@@ -7,6 +7,9 @@
     <!-- Font Awesome Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     
+    <!-- Supabase JS Client Library -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
     <style>
         :root {
             --bg-black: #0d0d0d;
@@ -523,7 +526,7 @@
 
                 <h3 style="margin-bottom:15px;" data-translate="subscribersListTitle">إدارة المشتركين</h3>
                 <div id="adminSubscribersList">
-                    <!-- Populated dynamically -->
+                    <!-- Populated dynamically from Supabase Cloud -->
                 </div>
             </div>
         </div>
@@ -531,6 +534,17 @@
     </div>
 
     <script>
+        // Supabase Database Connection Config
+        const SUPABASE_URL = "https://mtasqcyoyjnftplzkebt.supabase.co";
+        const SUPABASE_ANON_KEY = "sb_publishable_zr0LZysseMIYNDRJvkz8Fw_rASaE..."; 
+
+        let supabaseClient = null;
+        try {
+            supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        } catch (err) {
+            console.error("Supabase Init Error", err);
+        }
+
         let currentLang = 'ar';
         let currentUser = null;
 
@@ -655,12 +669,6 @@
             }
         };
 
-        document.addEventListener("DOMContentLoaded", () => {
-            if(!localStorage.getItem("usersData")) {
-                localStorage.setItem("usersData", JSON.stringify([]));
-            }
-        });
-
         function toggleLanguage() {
             currentLang = currentLang === 'ar' ? 'en' : 'ar';
             document.documentElement.dir = currentLang === 'ar' ? 'rtl' : 'ltr';
@@ -700,84 +708,92 @@
             return `${day} / ${month} / ${year}`;
         }
 
-        // استخدام نظام موحد وسهل يربط بين أي جهاز ولوحة التحكم فوراً عبر إرسال البيانات للواتساب الخاص بك + حفظ محلي مضمون
-        function handleRegister(e) {
-            e.preventDefault();
-            const users = JSON.parse(localStorage.getItem("usersData")) || [];
-            const phone = document.getElementById("regPhone").value;
-            const name = document.getElementById("regName").value;
-            const pass = document.getElementById("regPassword").value;
-            const gender = document.getElementById("regGender").value;
-            const age = document.getElementById("regAge").value;
-            const height = document.getElementById("regHeight").value;
-            const weight = document.getElementById("regWeight").value;
-            const goal = document.getElementById("regGoal").value;
-            const monthsCount = parseInt(document.getElementById("regPlan").value);
+        async function fetchSubscribersFromCloud() {
+            if (!supabaseClient) return [];
+            try {
+                const { data, error } = await supabaseClient.from('subscribers').select('*');
+                if (error) { console.error(error); return []; }
+                return data || [];
+            } catch (err) {
+                console.error(err);
+                return [];
+            }
+        }
 
-            if(users.find(u => u.phone === phone)) {
-                alert("رقم الموبايل مسجل بالفعل! يمكنك تسجيل الدخول مباشرة.");
-                switchAuthMode('login');
+        async function handleRegister(e) {
+            e.preventDefault();
+            const phone = document.getElementById("regPhone").value;
+            const existingUsers = await fetchSubscribersFromCloud();
+
+            if(existingUsers.find(u => u.phone === phone)) {
+                alert("رقم الموبايل مسجل بالفعل!");
                 return;
             }
 
+            const fileInput = document.getElementById("regPhoto");
+            const monthsCount = parseInt(document.getElementById("regPlan").value);
+            
             const startDateObj = new Date();
             const endDateObj = new Date();
             endDateObj.setMonth(startDateObj.getMonth() + monthsCount);
 
-            const fileInput = document.getElementById("regPhoto");
-
-            const saveAndNotify = (imgBase64) => {
+            const saveToCloud = async (imgBase64) => {
                 const newUser = {
-                    name: name,
+                    name: document.getElementById("regName").value,
                     phone: phone,
-                    password: pass,
-                    gender: gender,
-                    age: age,
-                    height: height,
-                    weight: weight,
-                    goal: goal,
+                    password: document.getElementById("regPassword").value,
+                    gender: document.getElementById("regGender").value,
+                    age: parseInt(document.getElementById("regAge").value),
+                    height: parseInt(document.getElementById("regHeight").value),
+                    weight: parseInt(document.getElementById("regWeight").value),
+                    goal: document.getElementById("regGoal").value,
                     planMonths: monthsCount,
-                    startDate: formatDate(startDateObj),
-                    endDate: formatDate(endDateObj),
+                    start_date: formatDate(startDateObj),
+                    end_date: formatDate(endDateObj),
                     photo: imgBase64 || "",
                     diet: "",
                     workout: "",
-                    coachNotes: "",
-                    permNote: "",
-                    dailyNote: ""
+                    coach_notes: "",
+                    perm_note: "",
+                    daily_note: ""
                 };
 
-                users.push(newUser);
-                localStorage.setItem("usersData", JSON.stringify(users));
+                if (supabaseClient) {
+                    const { error } = await supabaseClient.from('subscribers').insert([newUser]);
+                    if (error) {
+                        alert("حدث خطأ أثناء الاتصال بقاعدة البيانات. تأكد من إعداد جدول subscribers.");
+                        console.error(error);
+                        return;
+                    }
+                }
 
-                // فتح الواتساب مباشرة لإرسال تفاصيل المتدرب لك لتظهر عندك فوراً في اللوحة وتأكيد اشتراكه
-                const message = `أهلاً كابتن روماني، لقد قمت بالتسجيل في التطبيق:\nالاسم: ${name}\nرقم الموبايل: ${phone}\nالهدف: ${goal}\nمدة الاشتراك: ${monthsCount} شهر`;
-                const whatsappUrl = `https://wa.me/201044578792?text=${encodeURIComponent(message)}`;
-                
-                alert("تم تقديم طلب الاشتراك بنجاح! سيتم تحويلك لإرسال تفاصيلك للكابتن عبر الواتساب.");
-                window.open(whatsappUrl, '_blank');
-
+                alert("تم تقديم طلب الاشتراك بنجاح! يمكنك الآن تسجيل الدخول.");
                 switchAuthMode('login');
             };
 
             if(fileInput.files && fileInput.files[0]) {
                 const reader = new FileReader();
-                reader.onload = function(evt) { saveAndNotify(evt.target.result); };
+                reader.onload = function(evt) { saveToCloud(evt.target.result); };
                 reader.readAsDataURL(fileInput.files[0]);
             } else {
-                saveAndNotify("");
+                saveToCloud("");
             }
         }
 
-        function handleLogin(e) {
+        async function handleLogin(e) {
             e.preventDefault();
             const phone = document.getElementById("loginPhone").value;
             const pass = document.getElementById("loginPassword").value;
-            const users = JSON.parse(localStorage.getItem("usersData")) || [];
+            const users = await fetchSubscribersFromCloud();
 
             const user = users.find(u => u.phone === phone && u.password === pass);
             if(user) {
                 currentUser = user;
+                currentUser.startDate = user.start_date;
+                currentUser.endDate = user.end_date;
+                currentUser.coachNotes = user.coach_notes;
+                currentUser.permNote = user.perm_note;
+                currentUser.dailyNote = user.daily_note;
                 showMemberDashboard();
             } else {
                 alert("رقم الموبايل أو كلمة السر غير صحيحة!");
@@ -817,13 +833,13 @@
             renderAdminList();
         }
 
-        function toggleSubscriberBox(index) {
-            const body = document.getElementById(`subBody_${index}`);
+        function toggleSubscriberBox(id) {
+            const body = document.getElementById(`subBody_${id}`);
             body.classList.toggle("hidden");
         }
 
-        function renderAdminList() {
-            const users = JSON.parse(localStorage.getItem("usersData")) || [];
+        async function renderAdminList() {
+            const users = await fetchSubscribersFromCloud();
             const container = document.getElementById("adminSubscribersList");
             container.innerHTML = "";
 
@@ -832,11 +848,12 @@
                 return;
             }
 
-            users.forEach((u, index) => {
+            users.forEach((u) => {
+                const uId = u.id;
                 const box = document.createElement("div");
                 box.className = "subscriber-box";
                 box.innerHTML = `
-                    <div class="subscriber-header" onclick="toggleSubscriberBox(${index})">
+                    <div class="subscriber-header" onclick="toggleSubscriberBox('${uId}')">
                         <div style="display:flex; align-items:center; gap:12px;">
                             ${u.photo ? `<img src="${u.photo}" class="img-preview">` : '<i class="fas fa-user-circle" style="font-size:2.5rem; color:var(--accent-yellow);"></i>'}
                             <div>
@@ -845,30 +862,30 @@
                             </div>
                         </div>
                         <div style="text-align:left;">
-                            <span style="font-size:0.85rem; color:#aaa;">ينتهي في: <b style="color:var(--accent-yellow);">${u.endDate}</b></span>
+                            <span style="font-size:0.85rem; color:#aaa;">ينتهي في: <b style="color:var(--accent-yellow);">${u.end_date}</b></span>
                             <i class="fas fa-chevron-down" style="margin-right:8px;"></i>
                         </div>
                     </div>
-                    <div id="subBody_${index}" class="subscriber-body hidden">
+                    <div id="subBody_${uId}" class="subscriber-body hidden">
                         <div class="info-group">
                             <h4 style="color:var(--accent-yellow); margin-bottom:10px; border-bottom:1px solid #333; padding-bottom:5px;">بيانات المشترك</h4>
                             <div class="info-row"><span>النوع:</span> <b>${u.gender === 'male' ? 'ذكر' : 'أنثى'}</b></div>
                             <div class="info-row"><span>السن:</span> <b>${u.age} سنة</b></div>
                             <div class="info-row"><span>الطول / الوزن:</span> <b>${u.height} سم / ${u.weight} كجم</b></div>
                             <div class="info-row"><span>الهدف:</span> <b>${u.goal}</b></div>
-                            <div class="info-row"><span>تاريخ الاشتراك:</span> <b style="color:#25D366;">${u.startDate}</b></div>
-                            <div class="info-row" style="border-bottom:none;"><span>تاريخ الانتهاء:</span> <b style="color:var(--accent-yellow);">${u.endDate} (${u.planMonths} شهر)</b></div>
+                            <div class="info-row"><span>تاريخ الاشتراك:</span> <b style="color:#25D366;">${u.start_date}</b></div>
+                            <div class="info-row" style="border-bottom:none;"><span>تاريخ الانتهاء:</span> <b style="color:var(--accent-yellow);">${u.end_date} (${u.planMonths} شهر)</b></div>
                         </div>
                         
                         <div class="info-group">
                             <h4 style="color:var(--accent-yellow); margin-bottom:10px; border-bottom:1px solid #333; padding-bottom:5px;">البرامج المخصصة</h4>
                             <div class="form-group" style="margin-bottom:10px;">
                                 <label>النظام الغذائي (كتابة / لينك / PDF):</label>
-                                <textarea id="diet_${index}" rows="3">${u.diet || ''}</textarea>
+                                <textarea id="diet_${uId}" rows="3">${u.diet || ''}</textarea>
                             </div>
                             <div class="form-group">
                                 <label>نظام التمرين (كتابة / لينك / PDF):</label>
-                                <textarea id="workout_${index}" rows="3">${u.workout || ''}</textarea>
+                                <textarea id="workout_${uId}" rows="3">${u.workout || ''}</textarea>
                             </div>
                         </div>
 
@@ -876,15 +893,15 @@
                             <h4 style="color:var(--accent-yellow); margin-bottom:10px; border-bottom:1px solid #333; padding-bottom:5px;">الملاحظات والإدارة</h4>
                             <div class="form-group" style="margin-bottom:10px;">
                                 <label>ملاحظات الكابتن للمتدرب:</label>
-                                <textarea id="notes_${index}" rows="2">${u.coachNotes || ''}</textarea>
+                                <textarea id="notes_${uId}" rows="2">${u.coach_notes || ''}</textarea>
                             </div>
                             <div style="font-size:0.85rem; color:#ccc; background:#111; padding:8px; border-radius:4px; margin-bottom:10px;">
-                                <b>ملاحظة المتدرب الدائمة:</b> ${u.permNote || 'لا يوجد'}<br>
-                                <b>ملاحظة اليومية:</b> ${u.dailyNote || 'لا يوجد'}
+                                <b>ملاحظة المتدرب الدائمة:</b> ${u.perm_note || 'لا يوجد'}<br>
+                                <b>ملاحظة اليومية:</b> ${u.daily_note || 'لا يوجد'}
                             </div>
                             <div style="display:flex; gap:10px;">
-                                <button class="btn btn-accent" style="flex:1; padding:8px;" onclick="saveUserDataByAdmin(${index})">حفظ التعديلات</button>
-                                <button class="btn btn-danger" style="padding:8px;" onclick="deleteUser(${index})">حذف المشترك</button>
+                                <button class="btn btn-accent" style="flex:1; padding:8px;" onclick="saveUserDataByAdmin('${uId}')">حفظ التعديلات</button>
+                                <button class="btn btn-danger" style="padding:8px;" onclick="deleteUser('${uId}')">حذف المشترك</button>
                             </div>
                         </div>
                     </div>
@@ -893,34 +910,48 @@
             });
         }
 
-        function saveUserDataByAdmin(index) {
-            const users = JSON.parse(localStorage.getItem("usersData")) || [];
-            users[index].diet = document.getElementById(`diet_${index}`).value;
-            users[index].workout = document.getElementById(`workout_${index}`).value;
-            users[index].coachNotes = document.getElementById(`notes_${index}`).value;
+        async function saveUserDataByAdmin(id) {
+            const dietVal = document.getElementById(`diet_${id}`).value;
+            const workoutVal = document.getElementById(`workout_${id}`).value;
+            const notesVal = document.getElementById(`notes_${id}`).value;
 
-            localStorage.setItem("usersData", JSON.stringify(users));
-            alert("تم حفظ بيانات المتدرب بنجاح!");
+            if (supabaseClient) {
+                const { error } = await supabaseClient.from('subscribers').update({
+                    diet: dietVal,
+                    workout: workoutVal,
+                    coach_notes: notesVal
+                }).eq('id', id);
+
+                if (error) {
+                    alert("خطأ أثناء حفظ التعديلات!");
+                    return;
+                }
+            }
+            alert("تم حفظ بيانات المتدرب بنجاح في قاعدة البيانات السحابية!");
         }
 
-        function deleteUser(index) {
+        async function deleteUser(id) {
             if(confirm("هل أنت متأكد من حذف هذا المشترك نهائياً؟")) {
-                let users = JSON.parse(localStorage.getItem("usersData")) || [];
-                users.splice(index, 1);
-                localStorage.setItem("usersData", JSON.stringify(users));
+                if (supabaseClient) {
+                    await supabaseClient.from('subscribers').delete().eq('id', id);
+                }
                 renderAdminList();
             }
         }
 
-        function saveMemberNotes() {
-            let users = JSON.parse(localStorage.getItem("usersData")) || [];
-            let idx = users.findIndex(u => u.phone === currentUser.phone);
-            if(idx !== -1) {
-                users[idx].permNote = document.getElementById("permNote").value;
-                users[idx].dailyNote = document.getElementById("dailyNote").value;
-                localStorage.setItem("usersData", JSON.stringify(users));
-                alert("تم حفظ ملاحظاتك للكابتن بنجاح!");
+        async function saveMemberNotes() {
+            if (supabaseClient && currentUser) {
+                const { error } = await supabaseClient.from('subscribers').update({
+                    perm_note: document.getElementById("permNote").value,
+                    daily_note: document.getElementById("dailyNote").value
+                }).eq('phone', currentUser.phone);
+
+                if (error) {
+                    alert("خطأ في حفظ الملاحظات.");
+                    return;
+                }
             }
+            alert("تم حفظ ملاحظاتك للكابتن بنجاح!");
         }
 
         function calculateMacros() {
